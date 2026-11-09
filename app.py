@@ -9,6 +9,9 @@ from dotenv import load_dotenv
 load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+# Stronger model for speech-to-text (Gujarati accuracy); falls back to GEMINI_MODEL
+TRANSCRIBE_MODELS = [m for m in (os.getenv("TRANSCRIBE_MODEL", "gemini-3.6-flash"),
+                                 "gemini-3.8-flash", GEMINI_MODEL) if m]
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 
@@ -88,12 +91,29 @@ def transcribe(audio_path):
             "ogg": "audio/ogg", "m4a": "audio/mp4", "flac": "audio/flac"}.get(ext, "audio/wav")
     with open(audio_path, "rb") as f:
         data = f.read()
-    resp = gemini_client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=[types.Part.from_bytes(data=data, mime_type=mime),
-                  "આ ઓડિયોમાં જે બોલાયું છે તે ગુજરાતી લિપિમાં બરાબર લખો. ફક્ત લખાણ આપો, બીજું કંઈ નહીં."],
-    )
-    return (resp.text or "").strip()
+    prompt = ("આ ઓડિયો ગુજરાત (સુરત બાજુ) ના ખેડૂત કે નાના વેપારીનો પ્રશ્ન છે. "
+              "તેમાં ભાવ, કિલો, મણ, ક્વિન્ટલ, રૂપિયા, પાક (કપાસ, ડાંગર, શેરડી) જેવા શબ્દો હોઈ શકે. "
+              "જે બોલાયું છે તે શબ્દશઃ ગુજરાતી લિપિમાં લખો; આંકડા અંકમાં લખો (જેમ કે 7200). "
+              "હિન્દી કે અંગ્રેજી શબ્દ હોય તો જેમ બોલાયો તેમ રાખો. "
+              "જવાબ ન આપો, અનુવાદ ન કરો, ફક્ત બોલાયેલું લખાણ આપો.")
+    last = None
+    for m in dict.fromkeys(TRANSCRIBE_MODELS):
+        try:
+            resp = gemini_client.models.generate_content(
+                model=m,
+                contents=[types.Part.from_bytes(data=data, mime_type=mime), prompt],
+                config=types.GenerateContentConfig(temperature=0),
+            )
+            text = (resp.text or "").strip()
+            if text:
+                print(f"Heard ({m}):", text)
+                return text
+        except Exception as e:
+            last = e
+            print(f"Transcribe error with {m}:", e)
+    if last:
+        raise last
+    return ""
 
 
 def speak(text):
@@ -133,7 +153,7 @@ def respond_voice(audio_path, history, speak_on):
         history = (history or []) + [{"role": "assistant",
                    "content": "માફ કરશો, અવાજ સમજાયો નહીં. ફરી બોલો અથવા લખીને પૂછો."}]
         return history, None, None
-    _, history, audio = respond(text, history, speak_on)
+    _, history, audio = respond("🎤 " + text, history, speak_on)
     return history, audio, None
 
 
@@ -150,7 +170,7 @@ with gr.Blocks(title="MAKS AI સાથી") as demo:
     with gr.Row():
         box = gr.Textbox(placeholder="અહીં લખો અને Enter દબાવો...", show_label=False, scale=4)
         send = gr.Button("મોકલો", variant="primary", scale=1)
-    mic = gr.Audio(sources=["microphone"], type="filepath", label="🎤 બોલીને પૂછો (રેકોર્ડ કરો, પછી Stop)")
+    mic = gr.Audio(sources=["microphone"], type="filepath", label="🎤 બોલીને પૂછો (રેકોર્ડ કરો, ધીમે અને સ્પષ્ટ બોલો, પછી Stop)")
     speak_on = gr.Checkbox(value=True, label="🔊 જવાબ બોલીને સંભળાવો")
     voice_out = gr.Audio(label="જવાબ (અવાજ)", autoplay=True, interactive=False)
     gr.Examples(["મારી દુકાન માટે દિવાળી ઓફરનો મેસેજ લખી આપો",
