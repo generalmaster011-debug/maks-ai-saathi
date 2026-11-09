@@ -8,6 +8,7 @@ A Gujarati-speaking AI assistant for farmers and small traders. Ask in Gujarati 
 - **Gemini** (cloud, `gemini-3.5-flash-lite`) answers first.
 - **Ollama** (`qwen2.5:3b`, offline) takes over when there is no internet or Gemini fails. Answers then start with `(ઓફલાઇન મોડ)`.
 - Simple Gradio chat in the browser.
+- **Voice:** speak in Gujarati (Gemini transcribes), and hear the answer read aloud (gTTS, Gujarati).
 
 ## Example
 > 100 કિલો કપાસ 7200 રૂપિયે ક્વિન્ટલ વેચું તો કેટલા મળે?
@@ -24,7 +25,6 @@ Optional `.env` settings: `GEMINI_MODEL`, `OLLAMA_MODEL`, `OLLAMA_URL`.
 The key lives only in `.env`, which git ignores. Gemini prompts are sent to Google; don't type private data.
 
 ## Roadmap
-- Gujarati voice input and spoken answers
 - Mandi price lookups
 
 Built for ACE Builders Hackathon by Codebenders (Nov 2026).

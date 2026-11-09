@@ -78,13 +78,87 @@ def chat(message, history):
         return f"માફ કરશો, અત્યારે જવાબ ન મળ્યો. ભૂલ: {e}"
 
 
-demo = gr.ChatInterface(
-    fn=chat,
-    title="MAKS AI સાથી",
-    description="ગુજરાતીમાં પૂછો: ભાવ, હિસાબ, ખેતી, ધંધાની સલાહ.",
-    examples=["મારી દુકાન માટે દિવાળી ઓફરનો મેસેજ લખી આપો",
-              "100 કિલો કપાસ 7200 રૂપિયે ક્વિન્ટલ વેચું તો કેટલા મળે?"],
-)
+# ---------- Voice ----------
+def transcribe(audio_path):
+    """Gujarati speech -> text with Gemini (cloud)."""
+    if not (gemini_client and audio_path):
+        return ""
+    ext = os.path.splitext(audio_path)[1].lower().lstrip(".") or "wav"
+    mime = {"wav": "audio/wav", "mp3": "audio/mp3", "webm": "audio/webm",
+            "ogg": "audio/ogg", "m4a": "audio/mp4", "flac": "audio/flac"}.get(ext, "audio/wav")
+    with open(audio_path, "rb") as f:
+        data = f.read()
+    resp = gemini_client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=[types.Part.from_bytes(data=data, mime_type=mime),
+                  "આ ઓડિયોમાં જે બોલાયું છે તે ગુજરાતી લિપિમાં બરાબર લખો. ફક્ત લખાણ આપો, બીજું કંઈ નહીં."],
+    )
+    return (resp.text or "").strip()
+
+
+def speak(text):
+    """Gujarati text -> mp3 file (gTTS, needs internet). Returns None on failure."""
+    try:
+        import re, tempfile
+        from gtts import gTTS
+        clean = re.sub(r"[*_#`>]", "", text).replace("(ઓફલાઇન મોડ)", "").strip()
+        if not clean:
+            return None
+        path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3").name
+        gTTS(clean[:1500], lang="gu").save(path)
+        return path
+    except Exception as e:
+        print("TTS error:", e)
+        return None
+
+
+def respond(message, history, speak_on):
+    history = history or []
+    reply = chat(message, history)
+    history = history + [{"role": "user", "content": message},
+                         {"role": "assistant", "content": reply}]
+    audio = speak(reply) if speak_on else None
+    return "", history, audio
+
+
+def respond_voice(audio_path, history, speak_on):
+    if not audio_path:
+        return history, None, None
+    try:
+        text = transcribe(audio_path)
+    except Exception as e:
+        print("Transcribe error:", e)
+        text = ""
+    if not text:
+        history = (history or []) + [{"role": "assistant",
+                   "content": "માફ કરશો, અવાજ સમજાયો નહીં. ફરી બોલો અથવા લખીને પૂછો."}]
+        return history, None, None
+    _, history, audio = respond(text, history, speak_on)
+    return history, audio, None
+
+
+def make_chatbot():
+    try:
+        return gr.Chatbot(type="messages", height=420, label="MAKS AI સાથી")
+    except TypeError:
+        return gr.Chatbot(height=420, label="MAKS AI સાથી")
+
+
+with gr.Blocks(title="MAKS AI સાથી") as demo:
+    gr.Markdown("# MAKS AI સાથી\nગુજરાતીમાં લખીને કે બોલીને પૂછો: ભાવ, હિસાબ, ખેતી, ધંધાની સલાહ.")
+    bot = make_chatbot()
+    with gr.Row():
+        box = gr.Textbox(placeholder="અહીં લખો અને Enter દબાવો...", show_label=False, scale=4)
+        send = gr.Button("મોકલો", variant="primary", scale=1)
+    mic = gr.Audio(sources=["microphone"], type="filepath", label="🎤 બોલીને પૂછો (રેકોર્ડ કરો, પછી Stop)")
+    speak_on = gr.Checkbox(value=True, label="🔊 જવાબ બોલીને સંભળાવો")
+    voice_out = gr.Audio(label="જવાબ (અવાજ)", autoplay=True, interactive=False)
+    gr.Examples(["મારી દુકાન માટે દિવાળી ઓફરનો મેસેજ લખી આપો",
+                 "100 કિલો કપાસ 7200 રૂપિયે ક્વિન્ટલ વેચું તો કેટલા મળે?"], inputs=box)
+
+    box.submit(respond, [box, bot, speak_on], [box, bot, voice_out])
+    send.click(respond, [box, bot, speak_on], [box, bot, voice_out])
+    mic.stop_recording(respond_voice, [mic, bot, speak_on], [bot, voice_out, mic])
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(inbrowser=True)

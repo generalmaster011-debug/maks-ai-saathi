@@ -2,3 +2,4 @@ google-genai
 gradio
 python-dotenv
 requests
+gTTS
